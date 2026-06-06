@@ -23,6 +23,17 @@ export default function Dashboard({ session }: { session: Session }) {
     setLoading(false);
   }
 
+  async function setPassword() {
+    const pw = window.prompt('Set a password for this account (at least 6 characters). Next time you can just sign in with email + password.');
+    if (!pw) return;
+    if (pw.length < 6) {
+      alert('Password must be at least 6 characters.');
+      return;
+    }
+    const { error } = await supabase.auth.updateUser({ password: pw });
+    alert(error ? error.message : 'Password set. You can now sign in with email + password.');
+  }
+
   async function createGallery() {
     const title = window.prompt('Gallery name (e.g. "Aanya & Dev — The Wedding")');
     if (!title) return;
@@ -48,9 +59,14 @@ export default function Dashboard({ session }: { session: Session }) {
             </div>
             <div className="brand-sub">photographer studio</div>
           </div>
-          <button className="btn" onClick={() => supabase.auth.signOut()}>
-            Sign out
-          </button>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn" onClick={setPassword}>
+              Set password
+            </button>
+            <button className="btn" onClick={() => supabase.auth.signOut()}>
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase, photoUrl, brandUrl } from '../lib/supabase';
-import { processImage } from '../lib/image';
+import { processImage, makeSlug } from '../lib/image';
 import type { Gallery, Photo } from '../lib/types';
 
 export default function GalleryEditor() {
@@ -36,13 +36,40 @@ export default function GalleryEditor() {
     await supabase.from('galleries').update(fields).eq('id', g.id);
   }
 
-  // ---- photo upload ----
+  // ---- photo upload (appears live as each finishes) ----
   async function uploadPhotos(files: FileList | File[]) {
     if (!g) return;
-    const list = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    const incoming = Array.from(files).filter((f) => f.type.startsWith('image/'));
+
+    // Files already in this gallery, keyed by "name|size".
+    const existing = new Set(
+      photos.filter((p) => p.original_name && p.file_size != null).map((p) => `${p.original_name}|${p.file_size}`)
+    );
+
+    // Skip ones already present + de-dupe within this same drop.
+    const seen = new Set<string>();
+    const list: File[] = [];
+    let skipped = 0;
+    for (const f of incoming) {
+      const sig = `${f.name}|${f.size}`;
+      if (existing.has(sig) || seen.has(sig)) {
+        skipped++;
+        continue;
+      }
+      seen.add(sig);
+      list.push(f);
+    }
+
+    if (list.length === 0) {
+      setProgress(skipped ? `Skipped ${skipped} duplicate${skipped > 1 ? 's' : ''} — already in this gallery.` : '');
+      setTimeout(() => setProgress(''), 4000);
+      return;
+    }
+
+    let base = photos.length;
     let done = 0;
     for (const file of list) {
-      setProgress(`Uploading ${done + 1} of ${list.length}…`);
+      setProgress(`Uploading ${done + 1} of ${list.length}…${skipped ? `  ·  skipped ${skipped} duplicate${skipped > 1 ? 's' : ''}` : ''}`);
       try {
         const { thumbBlob, width, height } = await processImage(file);
         const key = crypto.randomUUID();
@@ -52,21 +79,34 @@ export default function GalleryEditor() {
 
         await supabase.storage.from('photos').upload(fullPath, file, { upsert: false });
         await supabase.storage.from('photos').upload(thumbPath, thumbBlob, { upsert: false });
-        await supabase.from('photos').insert({
-          gallery_id: g.id,
-          storage_path: fullPath,
-          thumb_path: thumbPath,
-          width,
-          height,
-          sort_order: photos.length + done,
-        });
+        const { data: row } = await supabase
+          .from('photos')
+          .insert({
+            gallery_id: g.id,
+            storage_path: fullPath,
+            thumb_path: thumbPath,
+            width,
+            height,
+            original_name: file.name,
+            file_size: file.size,
+            is_preview: false,
+            sort_order: base + done,
+          })
+          .select()
+          .single();
+        // Show it on our side immediately, as soon as it lands.
+        if (row) setPhotos((prev) => [...prev, row as Photo]);
       } catch (e) {
         console.error(e);
       }
       done++;
     }
-    setProgress('');
-    load();
+    setProgress(
+      skipped
+        ? `Done — added ${list.length}, skipped ${skipped} duplicate${skipped > 1 ? 's' : ''}.`
+        : `Done — added ${list.length}.`
+    );
+    setTimeout(() => setProgress(''), 4000);
   }
 
   async function removePhoto(p: Photo) {
@@ -74,6 +114,17 @@ export default function GalleryEditor() {
     await supabase.storage.from('photos').remove([p.storage_path, p.thumb_path]);
     await supabase.from('photos').delete().eq('id', p.id);
     setPhotos((prev) => prev.filter((x) => x.id !== p.id));
+    if (g?.cover_path === p.thumb_path) patch({ cover_path: null });
+  }
+
+  async function togglePreview(p: Photo) {
+    const next = !p.is_preview;
+    setPhotos((prev) => prev.map((x) => (x.id === p.id ? { ...x, is_preview: next } : x)));
+    await supabase.from('photos').update({ is_preview: next }).eq('id', p.id);
+  }
+
+  function setCover(p: Photo) {
+    patch({ cover_path: p.thumb_path });
   }
 
   // ---- brand assets ----
@@ -85,9 +136,20 @@ export default function GalleryEditor() {
     patch(kind === 'logo' ? { logo_url: path } : { watermark_url: path });
   }
 
-  function shareLink() {
-    return `${window.location.origin}/g/${g?.slug}`;
+  // ---- public showcase ----
+  async function togglePublic() {
+    if (!g) return;
+    if (!g.is_public) {
+      const ps = g.public_slug || makeSlug(g.title);
+      patch({ is_public: true, public_slug: ps });
+    } else {
+      patch({ is_public: false });
+    }
   }
+
+  const privateLink = () => `${window.location.origin}/g/${g?.slug}`;
+  const publicLink = () => `${window.location.origin}/p/${g?.public_slug}`;
+  const previewCount = photos.filter((p) => p.is_preview).length;
 
   if (!g) return <div className="boot">Loading…</div>;
 
@@ -98,7 +160,7 @@ export default function GalleryEditor() {
           <div className="brand serif">
             hueman<span className="dot">.</span>
           </div>
-          <button className="btn" onClick={() => window.open(shareLink(), '_blank')}>
+          <button className="btn" onClick={() => window.open(privateLink(), '_blank')}>
             Preview as client ↗
           </button>
         </div>
@@ -106,9 +168,7 @@ export default function GalleryEditor() {
 
       <div className="page fade">
         <button className="back-link" onClick={() => nav('/')}>
-          <svg viewBox="0 0 24 24">
-            <path d="M15 18l-6-6 6-6" />
-          </svg>
+          <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" /></svg>
           All galleries
         </button>
 
@@ -166,7 +226,7 @@ export default function GalleryEditor() {
               <div className="toggle-row" style={{ borderTop: 'none' }}>
                 <div>
                   <div className="lbl">Allow downloads</div>
-                  <div className="desc">Off = public can view but not save. Full-res downloads when on.</div>
+                  <div className="desc">Off = clients can view but not save. Full-res downloads when on.</div>
                 </div>
                 <div className={`sw ${g.allow_downloads ? 'on' : ''}`} onClick={() => patch({ allow_downloads: !g.allow_downloads })} />
               </div>
@@ -197,12 +257,55 @@ export default function GalleryEditor() {
                 <input placeholder="Leave blank for none" value={g.access_code ?? ''} onChange={(e) => setG({ ...g, access_code: e.target.value })} onBlur={(e) => patch({ access_code: e.target.value || null })} />
               </div>
               <div className="field" style={{ marginBottom: 0 }}>
-                <label>Private share link</label>
+                <label>Private client link (full gallery)</label>
                 <div className="share-box">
-                  <input value={shareLink()} readOnly />
-                  <button className="btn solid link-btn" onClick={() => navigator.clipboard?.writeText(shareLink())}>Copy</button>
+                  <input value={privateLink()} readOnly />
+                  <button className="btn solid link-btn" onClick={() => navigator.clipboard?.writeText(privateLink())}>Copy</button>
                 </div>
               </div>
+            </div>
+
+            {/* ---- public sneak peek ---- */}
+            <div className="panel">
+              <h2 className="serif">Public sneak peek</h2>
+              <div className="toggle-row" style={{ borderTop: 'none' }}>
+                <div>
+                  <div className="lbl">Show this publicly</div>
+                  <div className="desc">A separate public page with only the photos you star below — view-only, no downloads. Safe to post anywhere.</div>
+                </div>
+                <div className={`sw ${g.is_public ? 'on' : ''}`} onClick={togglePublic} />
+              </div>
+
+              {g.is_public && (
+                <>
+                  <div className="field" style={{ marginTop: 14 }}>
+                    <label>Hero heading</label>
+                    <input placeholder="e.g. Hueman Grad — Class of 2026" value={g.intro_heading ?? ''} onChange={(e) => setG({ ...g, intro_heading: e.target.value })} onBlur={(e) => patch({ intro_heading: e.target.value || null })} />
+                  </div>
+                  <div className="field">
+                    <label>Hero subtext (a line above / below)</label>
+                    <input placeholder="e.g. A look behind the cap & gown" value={g.intro_text ?? ''} onChange={(e) => setG({ ...g, intro_text: e.target.value })} onBlur={(e) => patch({ intro_text: e.target.value || null })} />
+                  </div>
+                  <div className="field">
+                    <label>Cover image</label>
+                    <div className="desc-inline">{g.cover_path ? 'Set — use “Set cover” on a photo below to change.' : 'Hover a photo below and click “Set cover”.'}</div>
+                  </div>
+                  <div className="field" style={{ marginBottom: 6 }}>
+                    <label>Sneak-peek photos: <b>{previewCount}</b> starred</label>
+                    <div className="desc-inline">Click the star on any photo below to add it to the public page.</div>
+                  </div>
+                  <div className="field" style={{ marginBottom: 0 }}>
+                    <label>Public link</label>
+                    <div className="share-box">
+                      <input value={publicLink()} readOnly />
+                      <button className="btn solid link-btn" onClick={() => navigator.clipboard?.writeText(publicLink())}>Copy</button>
+                    </div>
+                    <button className="auth-switch" style={{ margin: '12px auto 0' }} onClick={() => window.open(`${window.location.origin}/showcase`, '_blank')}>
+                      View your public portfolio ↗
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -222,20 +325,30 @@ export default function GalleryEditor() {
                 <path d="M12 3v12" />
               </svg>
               <div className="big">Drop photos here or click to upload</div>
-              <div className="small">Full resolution is preserved — thumbnails are made automatically</div>
+              <div className="small">Full resolution is preserved — thumbnails are made automatically. Duplicates are skipped.</div>
             </div>
             <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => e.target.files && uploadPhotos(e.target.files)} />
             {progress && <div className="progress">{progress}</div>}
 
+            {g.is_public && (
+              <div className="hint-line">⭐ = in public sneak peek &nbsp;·&nbsp; ◆ = cover image</div>
+            )}
+
             {photos.length > 0 && (
               <div className="thumb-grid">
                 {photos.map((p) => (
-                  <div key={p.id} className="thumb">
+                  <div key={p.id} className={`thumb ${p.is_preview ? 'is-preview' : ''} ${g.cover_path === p.thumb_path ? 'is-cover' : ''}`}>
                     <img src={photoUrl(p.thumb_path)} alt="" />
+                    {g.is_public && (
+                      <>
+                        <button className={`star ${p.is_preview ? 'on' : ''}`} title="Add to public sneak peek" onClick={() => togglePreview(p)}>
+                          <svg viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.8.7-5 4.7 1.4 6.7L12 18l-6 3.4 1.4-6.7-5-4.7 6.8-.7z" /></svg>
+                        </button>
+                        <button className="cover-btn" title="Use as cover" onClick={() => setCover(p)}>Set cover</button>
+                      </>
+                    )}
                     <button className="rm" onClick={() => removePhoto(p)}>
-                      <svg viewBox="0 0 24 24">
-                        <path d="M18 6L6 18M6 6l12 12" />
-                      </svg>
+                      <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" /></svg>
                     </button>
                   </div>
                 ))}

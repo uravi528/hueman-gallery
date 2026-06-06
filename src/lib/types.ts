@@ -16,6 +16,11 @@ export interface Gallery {
   default_theme: Theme;
   default_size: GridSize;
   access_code: string | null;
+  is_public: boolean;
+  public_slug: string | null;
+  cover_path: string | null;
+  intro_heading: string | null;
+  intro_text: string | null;
   created_at: string;
 }
 
@@ -27,5 +32,8 @@ export interface Photo {
   width: number | null;
   height: number | null;
   sort_order: number;
+  original_name: string | null;
+  file_size: number | null;
+  is_preview: boolean;
   created_at: string;
 }

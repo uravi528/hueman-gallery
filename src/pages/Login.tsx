@@ -3,18 +3,33 @@ import { supabase } from '../lib/supabase';
 
 export default function Login() {
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [mode, setMode] = useState<'password' | 'link'>('password');
   const [msg, setMsg] = useState('');
-  const [sending, setSending] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  async function send() {
+  async function signInPassword() {
+    if (!email.trim() || !password) return;
+    setBusy(true);
+    setMsg('');
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+    setBusy(false);
+    if (error) setMsg(error.message);
+    // On success the auth listener in App.tsx swaps the screen automatically.
+  }
+
+  async function sendLink() {
     if (!email.trim()) return;
-    setSending(true);
+    setBusy(true);
     setMsg('');
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim(),
       options: { emailRedirectTo: window.location.origin },
     });
-    setSending(false);
+    setBusy(false);
     setMsg(error ? error.message : 'Check your inbox — we sent you a sign-in link.');
   }
 
@@ -25,21 +40,53 @@ export default function Login() {
           <div className="brand serif">
             hueman<span className="dot">.</span>
           </div>
-          <p>
-            Photographer sign-in.
-            <br />
-            Enter your email and we’ll send a magic link — no password to remember.
-          </p>
-          <input
-            type="email"
-            placeholder="you@email.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && send()}
-          />
-          <button className="btn solid" onClick={send} disabled={sending}>
-            {sending ? 'Sending…' : 'Send sign-in link'}
-          </button>
+
+          {mode === 'password' ? (
+            <>
+              <p>Photographer sign-in.</p>
+              <input
+                type="email"
+                placeholder="you@email.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && signInPassword()}
+              />
+              <button className="btn solid" onClick={signInPassword} disabled={busy}>
+                {busy ? 'Signing in…' : 'Sign in'}
+              </button>
+              <button className="auth-switch" onClick={() => { setMode('link'); setMsg(''); }}>
+                Email me a sign-in link instead
+              </button>
+            </>
+          ) : (
+            <>
+              <p>
+                We&rsquo;ll email you a one-time sign-in link.
+                <br />
+                Use this the first time, or if you forget your password.
+              </p>
+              <input
+                type="email"
+                placeholder="you@email.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && sendLink()}
+              />
+              <button className="btn solid" onClick={sendLink} disabled={busy}>
+                {busy ? 'Sending…' : 'Send sign-in link'}
+              </button>
+              <button className="auth-switch" onClick={() => { setMode('password'); setMsg(''); }}>
+                Sign in with a password
+              </button>
+            </>
+          )}
+
           {msg && <div className="auth-msg">{msg}</div>}
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase, photoUrl, brandUrl } from '../lib/supabase';
 import { downloadFile } from '../lib/image';
@@ -19,6 +19,7 @@ export default function ClientGallery() {
   const [selectMode, setSelectMode] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [lbIndex, setLbIndex] = useState<number | null>(null);
+  const touchX = useRef<number | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -199,10 +200,21 @@ export default function ClientGallery() {
       </main>
 
       {lbIndex !== null && (
-        <div className="lb" onClick={(e) => { if (e.target === e.currentTarget) setLbIndex(null); }}>
+        <div
+          className="lb"
+          onClick={(e) => { if (e.target === e.currentTarget) setLbIndex(null); }}
+          onTouchStart={(e) => (touchX.current = e.touches[0].clientX)}
+          onTouchEnd={(e) => {
+            if (touchX.current === null) return;
+            const dx = e.changedTouches[0].clientX - touchX.current;
+            if (dx < -45) step(1);
+            else if (dx > 45) step(-1);
+            touchX.current = null;
+          }}
+        >
           <button className="close" onClick={() => setLbIndex(null)}><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12" /></svg></button>
           <button className="nav prev" onClick={() => step(-1)}><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" /></svg></button>
-          <img src={photoUrl(photos[lbIndex].storage_path)} alt="" />
+          <img src={photoUrl(photos[lbIndex].thumb_path)} alt="" />
           <button className="nav next" onClick={() => step(1)}><svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6" /></svg></button>
           {allow && (
             <button className="lb-dl" onClick={() => downloadOne(photos[lbIndex], lbIndex)}>

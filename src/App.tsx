@@ -6,6 +6,8 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import GalleryEditor from './pages/GalleryEditor';
 import ClientGallery from './pages/ClientGallery';
+import Showcase from './pages/Showcase';
+import ShowcaseIndex from './pages/ShowcaseIndex';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -24,16 +26,17 @@ export default function App() {
 
   return (
     <Routes>
-      {/* Public client gallery — opened via the private share link */}
+      {/* Public client gallery — full set, opened via the private share link */}
       <Route path="/g/:slug" element={<ClientGallery />} />
+
+      {/* Public sneak-peek showcase — hand-picked photos only */}
+      <Route path="/showcase" element={<ShowcaseIndex />} />
+      <Route path="/p/:publicSlug" element={<Showcase />} />
 
       {/* Owner area */}
       <Route path="/login" element={session ? <Navigate to="/" /> : <Login />} />
       <Route path="/" element={session ? <Dashboard session={session} /> : <Navigate to="/login" />} />
-      <Route
-        path="/manage/:id"
-        element={session ? <GalleryEditor /> : <Navigate to="/login" />}
-      />
+      <Route path="/manage/:id" element={session ? <GalleryEditor /> : <Navigate to="/login" />} />
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   );
